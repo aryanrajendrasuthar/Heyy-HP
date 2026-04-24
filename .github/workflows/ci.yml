@@ -36,6 +36,8 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
 
@@ -47,5 +49,8 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements/dev.txt
 
-      - name: Run tests
-        run: pytest
+      - name: Install prod dependencies
+        run: pip install -r requirements/prod.txt
+
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing

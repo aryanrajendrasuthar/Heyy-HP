@@ -47,3 +47,18 @@ indent-style = "space"
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 pythonpath = ["."]
+markers = [
+    "unit: unit tests (no I/O or external deps)",
+    "integration: integration tests",
+    "e2e: end-to-end tests",
+    "ui: tests requiring a display or Qt",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
