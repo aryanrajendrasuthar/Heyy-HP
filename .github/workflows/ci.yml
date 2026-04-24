@@ -37,6 +37,7 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     env:
+      # Run PySide6 / Qt headlessly in CI — no display required.
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
