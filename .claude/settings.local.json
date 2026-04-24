@@ -8,13 +8,7 @@
       "Bash(.venv/Scripts/python main.py)",
       "Bash(.venv/Scripts/ruff check *)",
       "Bash(.venv/Scripts/ruff format *)",
-      "Bash(start .venv/Scripts/pythonw main.py)",
-      "Bash(xargs wc *)",
-      "Bash(.venv/Scripts/pytest --cov=app --cov-report=term-missing)",
-      "Bash(.venv/Scripts/python --version)",
-      "Bash(.venv/Scripts/pip list *)",
-      "Bash(.venv/Scripts/python setup_sprint2.py)",
-      "Bash(.venv/Scripts/pytest --tb=short -q)"
+      "Bash(start .venv/Scripts/pythonw main.py)"
     ]
   }
 }
