@@ -18,34 +18,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install Ruff
         run: pip install ruff
-
       - name: Lint
         run: ruff check .
-
       - name: Format check
         run: ruff format --check .
 
   test:
-    name: Tests
+    name: Tests & Coverage
     runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
-      - name: Install dev dependencies
-        run: pip install -r requirements/dev.txt
-
-      - name: Run tests
-        run: pytest
+      - name: Install dependencies
+        run: |
+          pip install -r requirements/dev.txt
+          pip install -r requirements/prod.txt
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing

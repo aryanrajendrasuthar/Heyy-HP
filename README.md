@@ -78,7 +78,7 @@ ruff check . && ruff format --check . && pytest
 
 | Sprint | Goal | Status |
 |---|---|---|
-| Sprint 1 | Repo foundation, config, logging, CI | In progress |
+| Sprint 1 | Repo foundation, config, logging, CI | Complete ✓ |
 | Sprint 2 | Voice runtime (wake, STT, TTS, state machine) | Planned |
 | Sprint 3 | Action engine and routing | Planned |
 | Sprint 4 | Chat mode and interruption | Planned |

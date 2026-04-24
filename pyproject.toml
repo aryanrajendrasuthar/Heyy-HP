@@ -20,7 +20,7 @@ dependencies = [
 hp = "main:main"
 
 # ---------------------------------------------------------------------------
-# Ruff — linter + formatter
+# Ruff
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
@@ -29,9 +29,7 @@ src = ["app", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B"]
-ignore = [
-    "E501",  # line length enforced by formatter, not linter
-]
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
@@ -47,3 +45,20 @@ indent-style = "space"
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 pythonpath = ["."]
+markers = [
+    "unit: fast isolated unit tests",
+    "integration: tests that cross module boundaries",
+    "e2e: full end-to-end smoke tests",
+    "ui: tests requiring a Qt display",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
