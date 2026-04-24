@@ -1,0 +1,3 @@
+# Core runtime — always installed
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
