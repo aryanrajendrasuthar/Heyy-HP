@@ -1,6 +1,6 @@
 """Unit tests for HPMainWindow.
 
-Skipped automatically when PySide6 is not installed (e.g., bare dev environment).
+Skipped automatically when PySide6 is not installed.
 Run with QT_QPA_PLATFORM=offscreen for headless / CI execution.
 """
 
@@ -11,12 +11,13 @@ import pytest
 pytest.importorskip("PySide6")
 
 from app.assistant.state import AssistantState  # noqa: E402
+from app.config.settings import AppSettings  # noqa: E402
 from app.ui.main_window import HPMainWindow  # noqa: E402
 
 
 @pytest.fixture
 def window(qtbot):
-    w = HPMainWindow("HP")
+    w = HPMainWindow(AppSettings())
     qtbot.addWidget(w)
     return w
 
@@ -57,6 +58,13 @@ def test_clear_wipes_both_panels(window):
     assert window._response.toPlainText() == ""
 
 
-def test_all_states_can_be_set_without_error(window):
+def test_all_states_renderable(window):
     for state in AssistantState:
         window.set_state(state)  # must not raise
+
+
+def test_menu_bar_has_file_and_help(window):
+    menu_bar = window.menuBar()
+    titles = [menu_bar.actions()[i].text() for i in range(len(menu_bar.actions()))]
+    assert "File" in titles
+    assert "Help" in titles

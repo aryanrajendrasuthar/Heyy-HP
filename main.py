@@ -21,7 +21,7 @@ def main() -> int:
 
     app = create_app(settings)
 
-    window = HPMainWindow(settings.app_name)
+    window = HPMainWindow(settings)
     tray = HPTray(window)
     tray.show()
     window.show()

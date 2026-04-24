@@ -1,18 +1,26 @@
-"""HP main window — transcript panel, response panel, and status indicator."""
+"""HP main window — transcript panel, response panel, status bar, and menu."""
 
 from __future__ import annotations
 
 import logging
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QLabel, QMainWindow, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.assistant.state import AssistantState
+from app.config.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
-# Maps each state to a (display label, color hex) pair.
 _STATE_DISPLAY: dict[AssistantState, tuple[str, str]] = {
     AssistantState.IDLE: ("● IDLE", "#888888"),
     AssistantState.WAKE_DETECTED: ("● WAKE DETECTED", "#F5A623"),
@@ -25,6 +33,22 @@ _STATE_DISPLAY: dict[AssistantState, tuple[str, str]] = {
 _STYLESHEET = """
 QMainWindow, QWidget#central {
     background-color: #1E1E2E;
+}
+QMenuBar {
+    background-color: #1E1E2E;
+    color: #AAAACC;
+    font-size: 13px;
+}
+QMenuBar::item:selected {
+    background-color: #2A2A3E;
+}
+QMenu {
+    background-color: #2A2A3E;
+    color: #E0E0E0;
+    border: 1px solid #3A3A5C;
+}
+QMenu::item:selected {
+    background-color: #4A4A6C;
 }
 QLabel#section {
     color: #666688;
@@ -45,7 +69,6 @@ QTextEdit {
 
 
 def _make_window_icon() -> QIcon:
-    """Draw a simple 'H' badge — no external asset required at bootstrap."""
     px = QPixmap(32, 32)
     px.fill(Qt.GlobalColor.transparent)
     p = QPainter(px)
@@ -63,17 +86,41 @@ def _make_window_icon() -> QIcon:
 
 
 class HPMainWindow(QMainWindow):
-    def __init__(self, app_name: str = "HP") -> None:
+    def __init__(self, settings: AppSettings) -> None:
         super().__init__()
-        self.setWindowTitle(app_name)
+        self._settings = settings
+        self.setWindowTitle(settings.app_name)
         self.setWindowIcon(_make_window_icon())
         self.setMinimumSize(500, 420)
         self.setStyleSheet(_STYLESHEET)
+        self._build_menu_bar()
         self._build_ui()
         logger.debug("Main window initialised")
 
     # ------------------------------------------------------------------
-    # Layout
+    # Menu bar
+    # ------------------------------------------------------------------
+
+    def _build_menu_bar(self) -> None:
+        file_menu = self.menuBar().addMenu("File")
+
+        settings_action = QAction("Settings…", self)
+        settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(QApplication.quit)
+        file_menu.addAction(quit_action)
+
+        help_menu = self.menuBar().addMenu("Help")
+        about_action = QAction("About HP", self)
+        about_action.triggered.connect(self._open_about)
+        help_menu.addAction(about_action)
+
+    # ------------------------------------------------------------------
+    # Content layout
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -119,6 +166,22 @@ class HPMainWindow(QMainWindow):
         self._transcript.clear()
         self._response.clear()
 
+    # ------------------------------------------------------------------
+    # Slots
+    # ------------------------------------------------------------------
+
+    def _open_settings(self) -> None:
+        from app.ui.settings_panel import SettingsDialog
+
+        SettingsDialog(self._settings, parent=self).exec()
+
+    def _open_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "HP Assistant",
+            "HP — Local Desktop Voice Assistant\nVersion 0.1.0",
+        )
+
 
 # ------------------------------------------------------------------
 # Internal helpers
@@ -128,7 +191,6 @@ class HPMainWindow(QMainWindow):
 class _StatusBar(QLabel):
     def __init__(self) -> None:
         super().__init__("● IDLE")
-        self.setObjectName("status")
         self._apply_style("#888888")
 
     def update_state(self, state: AssistantState) -> None:

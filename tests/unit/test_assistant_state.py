@@ -15,11 +15,9 @@ def test_state_values_are_unique():
     assert len(values) == len(set(values))
 
 
-def test_idle_is_default_start():
-    # Smoke check: IDLE exists and is accessible
+def test_idle_is_accessible():
     assert AssistantState.IDLE is not None
 
 
 def test_all_states_iterable():
-    states = list(AssistantState)
-    assert len(states) == 6
+    assert len(list(AssistantState)) == 6
