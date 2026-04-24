@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 """Unit tests for AssistantState enum."""
+=======
+"""Unit tests for AssistantState."""
+>>>>>>> e82e590 (All of sprint 2)
 
 from __future__ import annotations
 
@@ -10,11 +14,16 @@ def test_all_states_present():
     assert names == {"IDLE", "WAKE_DETECTED", "LISTENING", "PROCESSING", "SPEAKING", "FOLLOW_UP"}
 
 
+<<<<<<< HEAD
 def test_state_values_are_unique():
+=======
+def test_states_are_unique():
+>>>>>>> e82e590 (All of sprint 2)
     values = [s.value for s in AssistantState]
     assert len(values) == len(set(values))
 
 
+<<<<<<< HEAD
 def test_idle_is_default_start():
     # Smoke check: IDLE exists and is accessible
     assert AssistantState.IDLE is not None
@@ -23,3 +32,12 @@ def test_idle_is_default_start():
 def test_all_states_iterable():
     states = list(AssistantState)
     assert len(states) == 6
+=======
+def test_states_accessible_by_name():
+    assert AssistantState["IDLE"] is AssistantState.IDLE
+    assert AssistantState["SPEAKING"] is AssistantState.SPEAKING
+
+
+def test_states_iterable():
+    assert len(list(AssistantState)) == 6
+>>>>>>> e82e590 (All of sprint 2)

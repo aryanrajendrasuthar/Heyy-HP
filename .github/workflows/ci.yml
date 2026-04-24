@@ -37,7 +37,10 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     env:
+<<<<<<< HEAD
       # Run PySide6 / Qt headlessly in CI — no display required.
+=======
+>>>>>>> e82e590 (All of sprint 2)
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
@@ -52,5 +55,8 @@ jobs:
           pip install -r requirements/dev.txt
           pip install -r requirements/prod.txt
 
-      - name: Run tests
-        run: pytest
+      - name: Install prod dependencies
+        run: pip install -r requirements/prod.txt
+
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing
