@@ -1,8 +1,4 @@
-"""Unit tests for HPMainWindow.
-
-Skipped automatically when PySide6 is not installed (e.g., bare dev environment).
-Run with QT_QPA_PLATFORM=offscreen for headless / CI execution.
-"""
+"""Unit tests for HPMainWindow."""
 
 from __future__ import annotations
 
@@ -10,15 +6,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QLabel  # noqa: E402
+
 from app.assistant.state import AssistantState  # noqa: E402
 from app.config.settings import AppSettings  # noqa: E402
 from app.ui.main_window import HPMainWindow  # noqa: E402
 
 
-@pytest.fixture
-def window(qtbot):
-    w = HPMainWindow("HP")
-=======
 @pytest.fixture()
 def window(qtbot):  # type: ignore[no-untyped-def]
     w = HPMainWindow(AppSettings())
@@ -26,7 +20,7 @@ def window(qtbot):  # type: ignore[no-untyped-def]
     return w
 
 
-def test_window_title(window):
+def test_window_title(window: HPMainWindow) -> None:
     assert window.windowTitle() == "HP"
 
 
@@ -66,10 +60,11 @@ def test_menu_bar_present(window: HPMainWindow) -> None:
     assert window.menuBar() is not None
 
 
-def test_all_states_can_be_set_without_error(window):
+def test_all_states_can_be_set_without_error(window: HPMainWindow) -> None:
     for state in AssistantState:
-        window.set_state(state)  # must not raise
-=======
+        window.set_state(state)
+
+
 def test_initial_state_label_idle(window: HPMainWindow) -> None:
     texts = [lb.text() for lb in window.findChildren(QLabel)]
     assert "IDLE" in texts
