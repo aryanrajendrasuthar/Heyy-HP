@@ -1,13 +1,17 @@
-"""HP main window — transcript panel, response panel, and status indicator."""
-
+"""HP main window — state display with dark theme and menu bar."""
 
 from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QLabel, QMainWindow, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMenuBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.assistant.state import AssistantState
 from app.config.settings import AppSettings
@@ -103,9 +107,4 @@ class HPMainWindow(QMainWindow):
             self,
             "About HP",
             f"{self._settings.app_name} — local desktop voice assistant\nVersion 0.1.0",
-        
-
-def _section_label(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setObjectName("section")
-    return lbl
+        )

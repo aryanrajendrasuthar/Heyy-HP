@@ -9,6 +9,3 @@ class VoiceBridge(QObject):
     state_changed: Signal = Signal(object)  # AssistantState
     transcript_ready: Signal = Signal(str)
     response_ready: Signal = Signal(str)
-
-    def __init_subclass__(cls) -> None:
-        super().__init_subclass__()

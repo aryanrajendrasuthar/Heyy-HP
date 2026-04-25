@@ -7,12 +7,10 @@ import sys
 
 from app.assistant.machine import AssistantStateMachine
 from app.config.settings import AppSettings
-from app.ui import HPMainWindow, HPTray, create_app
 from app.ui.app import create_app
 from app.ui.main_window import HPMainWindow
 from app.ui.tray import HPTray
 from app.ui.voice_bridge import VoiceBridge
-
 from app.utils.logging import setup_logging
 from app.voice.runtime import VoiceRuntime
 
@@ -25,6 +23,9 @@ def main() -> int:
     logger.info("HP assistant starting (version 0.1.0, debug=%s)", settings.debug)
 
     app = create_app(settings)
+    state_machine = AssistantStateMachine(settings)
+    bridge = VoiceBridge()
+    state_machine.add_state_callback(bridge.state_changed.emit)
 
     window = HPMainWindow(settings)
     tray = HPTray(window)
@@ -44,7 +45,6 @@ def main() -> int:
     window.show()
     runtime.start()
     logger.info("HP ready")
-    return app.exec()
 
     result = app.exec()
     runtime.stop()
