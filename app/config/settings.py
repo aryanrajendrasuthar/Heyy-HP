@@ -48,3 +48,8 @@ class AppSettings(BaseSettings):
     # LLM
     llm_provider: str = "stub"
     llm_max_history: int = Field(default=10, ge=1)
+
+    # Vision
+    webcam_index: int = Field(default=0, ge=0)
+    vision_max_frames: int = Field(default=30, ge=1)
+    vision_confidence: float = Field(default=0.4, ge=0.0, le=1.0)
