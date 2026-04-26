@@ -1,10 +1,11 @@
-"""Settings dialog — read-only view of AppSettings with runtime log-level override."""
+"""Settings dialog — read-only view of AppSettings with runtime overrides."""
 
 from __future__ import annotations
 
 import logging
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config.settings import AppSettings
+from app.services import startup as _startup
 
 _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -59,9 +61,20 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel("Log level (runtime)"), self._level_combo)
         self._level_combo.currentTextChanged.connect(self._on_level_changed)
 
+        self._startup_cb = QCheckBox("Start HP on Windows boot")
+        self._startup_cb.setChecked(_startup.is_registered())
+        self._startup_cb.toggled.connect(self._on_startup_toggled)
+        outer.addWidget(self._startup_cb)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
 
     def _on_level_changed(self, level_name: str) -> None:
         logging.getLogger().setLevel(level_name)
+
+    def _on_startup_toggled(self, checked: bool) -> None:
+        if checked:
+            _startup.register()
+        else:
+            _startup.unregister()

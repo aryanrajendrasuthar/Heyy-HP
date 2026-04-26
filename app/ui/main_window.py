@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.__version__ import __version__
 from app.assistant.state import AssistantState
 from app.config.settings import AppSettings
 from app.ui.settings_panel import SettingsDialog
@@ -153,5 +154,5 @@ class HPMainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About HP",
-            f"{self._settings.app_name} — local desktop voice assistant\nVersion 0.1.0",
+            f"{self._settings.app_name} — local desktop voice assistant\nVersion {__version__}",
         )

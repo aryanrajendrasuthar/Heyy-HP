@@ -1,4 +1,4 @@
-"""System tray icon — show/hide the main window, quit HP."""
+"""System tray icon — show/hide the main window, startup toggle, quit HP."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import logging
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QSystemTrayIcon
+
+from app.services import startup as _startup
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,11 @@ class HPTray(QSystemTrayIcon):
         menu.addAction("Show", self._show_window)
         menu.addAction("Hide", self._hide_window)
         menu.addSeparator()
+        self._startup_action = menu.addAction("Start on boot")
+        self._startup_action.setCheckable(True)
+        self._startup_action.setChecked(_startup.is_registered())
+        self._startup_action.triggered.connect(self._toggle_startup)
+        menu.addSeparator()
         menu.addAction("Quit", self._quit)
         self.setContextMenu(menu)
 
@@ -54,8 +61,13 @@ class HPTray(QSystemTrayIcon):
     def _hide_window(self) -> None:
         self._window.hide()
 
-    def _quit(self) -> None:
+    def _toggle_startup(self, checked: bool) -> None:
+        if checked:
+            _startup.register()
+        else:
+            _startup.unregister()
 
+    def _quit(self) -> None:
         QApplication.quit()
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:

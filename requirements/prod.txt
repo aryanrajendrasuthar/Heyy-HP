@@ -1,11 +1,10 @@
-# Production dependencies — added sprint by sprint as each layer is built
-# Install with: pip install -r requirements/prod.txt
+# Production dependencies — install with: pip install -r requirements/prod.txt
 -r base.txt
 
-# Desktop UI (Sprint 1 – ui-shell branch)
+# Desktop UI (Sprint 1)
 pyside6>=6.7.0
 
-# Local API / orchestration (Sprint 1 – ui-shell branch)
+# Local API / orchestration (Sprint 1)
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 
@@ -18,5 +17,11 @@ openwakeword>=0.6.0
 # Microphone capture (Sprint 2)
 pyaudio>=0.2.14
 
-# Text-to-speech (Sprint 2) — uses Windows built-in SAPI via pyttsx3
+# Text-to-speech (Sprint 2)
 pyttsx3>=2.90
+
+# Vision — hand tracking + object recognition (Sprint 5, optional)
+# Uncomment to enable "what's in my hand" command:
+# opencv-python>=4.9.0
+# mediapipe>=0.10.0
+# ultralytics>=8.0.0

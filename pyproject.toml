@@ -7,7 +7,7 @@ packages = ["app"]
 
 [project]
 name = "hp-assistant"
-version = "0.1.0"
+version = "1.0.0"
 description = "HP — a local-first Windows desktop voice assistant"
 requires-python = ">=3.11"
 license = { text = "MIT" }
