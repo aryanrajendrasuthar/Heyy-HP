@@ -9,6 +9,8 @@ def main() -> int:
     from app.assistant.dispatcher import CommandDispatcher
     from app.assistant.machine import AssistantStateMachine
     from app.config.settings import AppSettings
+    from app.llm.conversation import ConversationBuffer
+    from app.llm.factory import get_provider
     from app.ui.app import create_app
     from app.ui.main_window import HPMainWindow
     from app.ui.tray import HPTray
@@ -23,6 +25,8 @@ def main() -> int:
     state_machine = AssistantStateMachine(settings)
     bridge = VoiceBridge()
     dispatcher = CommandDispatcher()
+    llm = get_provider(settings)
+    conv = ConversationBuffer(max_turns=settings.llm_max_history)
 
     state_machine.add_state_callback(bridge.state_changed.emit)
 
@@ -39,6 +43,8 @@ def main() -> int:
         on_transcript=bridge.transcript_ready.emit,
         on_response=bridge.response_ready.emit,
         on_command=dispatcher.dispatch,
+        llm=llm,
+        conversation=conv,
     )
 
     tray.show()

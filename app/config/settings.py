@@ -47,3 +47,4 @@ class AppSettings(BaseSettings):
 
     # LLM
     llm_provider: str = "stub"
+    llm_max_history: int = Field(default=10, ge=1)

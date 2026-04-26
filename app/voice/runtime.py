@@ -12,6 +12,7 @@ from typing import Any
 from app.assistant.machine import AssistantStateMachine
 from app.assistant.state import AssistantState
 from app.config.settings import AppSettings
+from app.llm.conversation import ConversationBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ except ImportError:
 _SAMPLE_RATE = 16_000
 _CHUNK = 512
 _FORMAT = 0x8  # paInt16
+_INTERRUPT_RMS_MULTIPLIER = 1.5  # speech during TTS must exceed this × vad threshold
 
 
 def _rms(data: bytes) -> float:
@@ -67,12 +69,16 @@ class VoiceRuntime:
         on_transcript: Callable[[str], None] | None = None,
         on_response: Callable[[str], None] | None = None,
         on_command: Callable[[str], str | None] | None = None,
+        llm: Any | None = None,
+        conversation: ConversationBuffer | None = None,
     ) -> None:
         self._settings = settings
         self._sm = state_machine
         self._on_transcript = on_transcript
         self._on_response = on_response
         self._on_command = on_command
+        self._llm = llm
+        self._conv = conversation or ConversationBuffer(max_turns=10)
 
         self._audio_q: queue.Queue[bytes] = queue.Queue()
         self._stop_event = threading.Event()
@@ -83,6 +89,10 @@ class VoiceRuntime:
         self._wake_model: Any = None
         self._stt_model: Any = None
         self._tts_engine: Any = None
+        self._tts_lock = threading.Lock()
+
+        self._listen_buf: list[bytes] = []
+        self._silence_count: int = 0
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -153,7 +163,7 @@ class VoiceRuntime:
         try:
             self._stt_model = _WhisperModel(
                 self._settings.whisper_model,
-                device="cpu",
+                device=self._settings.stt_device,
                 compute_type="int8",
             )
         except Exception:
@@ -166,6 +176,7 @@ class VoiceRuntime:
         try:
             self._tts_engine = _pyttsx3.init()
             self._tts_engine.setProperty("rate", self._settings.tts_rate)
+            self._tts_engine.setProperty("volume", self._settings.tts_volume)
         except Exception:
             logger.exception("Failed to init TTS engine")
 
@@ -200,8 +211,12 @@ class VoiceRuntime:
         current = self._sm.state
         if current == AssistantState.IDLE:
             self._check_wake(chunk)
-        elif current == AssistantState.LISTENING:
+        elif current in (AssistantState.LISTENING, AssistantState.FOLLOW_UP):
             self._accumulate(chunk)
+        elif current == AssistantState.SPEAKING:
+            self._check_interrupt(chunk)
+
+    # ── Wake-word detection ───────────────────────────────────────────────
 
     def _check_wake(self, chunk: bytes) -> None:
         if self._wake_model is None:
@@ -214,12 +229,11 @@ class VoiceRuntime:
             threshold = self._settings.wake_word_threshold
             if any(v >= threshold for v in scores.values()):
                 logger.info("Wake word detected")
-                self._sm.trigger("wake")
+                self._sm.on_wake()
         except Exception:
             logger.exception("Wake word check failed")
 
-    _listen_buf: list[bytes] = []
-    _silence_count: int = 0
+    # ── Listening / VAD ───────────────────────────────────────────────────
 
     def _accumulate(self, chunk: bytes) -> None:
         self._listen_buf.append(chunk)
@@ -235,19 +249,21 @@ class VoiceRuntime:
             self._silence_count = 0
             self._transcribe(audio)
 
+    # ── Transcription ─────────────────────────────────────────────────────
+
     def _transcribe(self, audio: bytes) -> None:
         if self._stt_model is None:
-            self._sm.trigger("no_speech")
+            self._sm.on_no_speech()
             return
         try:
             import numpy as np  # type: ignore[import-untyped]
 
-            self._sm.trigger("processing")
+            self._sm.on_utterance_end()
             arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
             segments, _ = self._stt_model.transcribe(arr, language="en")
             text = " ".join(s.text for s in segments).strip()
             if not text:
-                self._sm.trigger("no_speech")
+                self._sm.on_no_speech()
                 return
             logger.info("Transcript: %s", text)
             if self._on_transcript:
@@ -255,26 +271,59 @@ class VoiceRuntime:
             self._respond(text)
         except Exception:
             logger.exception("Transcription failed")
-            self._sm.trigger("error")
+            self._sm.on_error()
+
+    # ── Response ──────────────────────────────────────────────────────────
 
     def _respond(self, text: str) -> None:
         response: str | None = None
+
+        # 1. Try command dispatcher
         if self._on_command:
             response = self._on_command(text)
+
+        # 2. Fall back to LLM chat
+        if response is None and self._llm is not None:
+            try:
+                self._conv.add("user", text)
+                response = self._llm.chat(text)
+                self._conv.add("assistant", response)
+            except Exception:
+                logger.exception("LLM chat failed")
+
+        # 3. Ultimate echo fallback
         if response is None:
             response = f"I heard you say: {text}"
+
         logger.info("Response: %s", response)
         if self._on_response:
             self._on_response(response)
         self._speak(response)
-        self._sm.trigger("done")
+        self._sm.on_speaking_done()
+
+    # ── TTS + interruption ────────────────────────────────────────────────
 
     def _speak(self, text: str) -> None:
         if self._tts_engine is None:
             return
         try:
-            self._sm.trigger("speak")
-            self._tts_engine.say(text)
-            self._tts_engine.runAndWait()
+            self._sm.on_response_ready()
+            with self._tts_lock:
+                self._tts_engine.say(text)
+                self._tts_engine.runAndWait()
         except Exception:
             logger.exception("TTS failed")
+
+    def _check_interrupt(self, chunk: bytes) -> None:
+        threshold = self._settings.vad_energy_threshold * _INTERRUPT_RMS_MULTIPLIER
+        if _rms(chunk) > threshold:
+            self._do_interrupt()
+
+    def _do_interrupt(self) -> None:
+        logger.info("Speech detected during TTS — interrupting")
+        if self._tts_engine is not None:
+            try:
+                self._tts_engine.stop()
+            except Exception:
+                logger.debug("TTS stop() raised (may be harmless)", exc_info=True)
+        self._sm.on_interrupted()
