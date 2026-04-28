@@ -9,3 +9,5 @@ class VoiceBridge(QObject):
     state_changed: Signal = Signal(object)  # AssistantState
     transcript_ready: Signal = Signal(str)
     response_ready: Signal = Signal(str)
+    quit_requested: Signal = Signal()  # safe to emit from any thread
+    notification: Signal = Signal(str)  # reminder / system alerts

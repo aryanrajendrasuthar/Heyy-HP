@@ -47,9 +47,8 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────
 _SAMPLE_RATE = 16_000
-_CHUNK = 512
+_CHUNK = 1280  # 80 ms — minimum frame size required by openWakeWord
 _FORMAT = 0x8  # paInt16
-_INTERRUPT_RMS_MULTIPLIER = 1.5  # speech during TTS must exceed this × vad threshold
 
 
 def _rms(data: bytes) -> float:
@@ -88,11 +87,11 @@ class VoiceRuntime:
         self._stream: Any = None
         self._wake_model: Any = None
         self._stt_model: Any = None
-        self._tts_engine: Any = None
-        self._tts_lock = threading.Lock()
 
         self._listen_buf: list[bytes] = []
         self._silence_count: int = 0
+        self._has_speech: bool = False  # True once actual speech detected in current listen window
+        self._tts_queue: queue.Queue[str | None] = queue.Queue()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -101,14 +100,17 @@ class VoiceRuntime:
         self._init_audio()
         self._init_wake()
         self._init_stt()
-        self._init_tts()
-        t = threading.Thread(target=self._pipeline_loop, daemon=True, name="voice-pipeline")
-        self._threads.append(t)
-        t.start()
+        # TTS initialised inside its own thread — required for COM on Windows
+        tts_t = threading.Thread(target=self._tts_worker, daemon=True, name="voice-tts")
+        pipeline_t = threading.Thread(target=self._pipeline_loop, daemon=True, name="voice-pipeline")
+        self._threads.extend([tts_t, pipeline_t])
+        tts_t.start()
+        pipeline_t.start()
         logger.info("VoiceRuntime started")
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._tts_queue.put(None)  # wake TTS worker so it exits
         for t in self._threads:
             t.join(timeout=3)
         self._threads.clear()
@@ -169,16 +171,49 @@ class VoiceRuntime:
         except Exception:
             logger.exception("Failed to load Whisper model")
 
-    def _init_tts(self) -> None:
-        if not _TTS_AVAILABLE:
+    def _tts_worker(self) -> None:
+        """Init pyttsx3 and speak queued text — runs in its own thread for COM compatibility."""
+        tts_ok = False
+        engine = None
+        if _TTS_AVAILABLE:
+            try:
+                engine = _pyttsx3.init()
+                engine.setProperty("rate", self._settings.tts_rate)
+                engine.setProperty("volume", self._settings.tts_volume)
+                tts_ok = True
+            except Exception:
+                logger.exception("Failed to init TTS engine")
+        else:
             logger.warning("pyttsx3 not available — TTS disabled")
-            return
-        try:
-            self._tts_engine = _pyttsx3.init()
-            self._tts_engine.setProperty("rate", self._settings.tts_rate)
-            self._tts_engine.setProperty("volume", self._settings.tts_volume)
-        except Exception:
-            logger.exception("Failed to init TTS engine")
+
+        # Always drain the queue so state machine never gets stuck at SPEAKING
+        while not self._stop_event.is_set():
+            try:
+                text = self._tts_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if text is None:
+                break
+            if not text:
+                # Empty string = silent ack (e.g. "shut up") — skip TTS, still advance state
+                self._sm.on_speaking_done()
+                continue
+            if tts_ok and engine is not None:
+                try:
+                    engine.say(text)
+                    engine.runAndWait()
+                except Exception:
+                    logger.exception("TTS speak failed — reinitialising engine")
+                    # pyttsx3 can get into a bad state; reinit so next utterance works
+                    try:
+                        engine = _pyttsx3.init()
+                        engine.setProperty("rate", self._settings.tts_rate)
+                        engine.setProperty("volume", self._settings.tts_volume)
+                    except Exception:
+                        logger.exception("TTS engine reinit failed")
+                        tts_ok = False
+                        engine = None
+            self._sm.on_speaking_done()
 
     # ── Audio callback ────────────────────────────────────────────────────
 
@@ -214,7 +249,7 @@ class VoiceRuntime:
         elif current in (AssistantState.LISTENING, AssistantState.FOLLOW_UP):
             self._accumulate(chunk)
         elif current == AssistantState.SPEAKING:
-            self._check_interrupt(chunk)
+            pass  # drain mic audio while HP is speaking — prevents self-interruption
 
     # ── Wake-word detection ───────────────────────────────────────────────
 
@@ -236,18 +271,32 @@ class VoiceRuntime:
     # ── Listening / VAD ───────────────────────────────────────────────────
 
     def _accumulate(self, chunk: bytes) -> None:
-        self._listen_buf.append(chunk)
         rms = _rms(chunk)
-        if rms < self._settings.vad_energy_threshold:
+        if rms >= self._settings.vad_energy_threshold:
+            self._has_speech = True
+            self._silence_count = 0
+        elif self._has_speech:
             self._silence_count += 1
+
+        self._listen_buf.append(chunk)
+
+        if self._has_speech:
+            silence_chunks = int(self._settings.silence_timeout_s * _SAMPLE_RATE / _CHUNK)
+            if self._silence_count >= silence_chunks:
+                audio = b"".join(self._listen_buf)
+                self._listen_buf = []
+                self._silence_count = 0
+                self._has_speech = False
+                self._transcribe(audio)
         else:
-            self._silence_count = 0
-        silence_chunks = int(self._settings.silence_timeout_s * _SAMPLE_RATE / _CHUNK)
-        if self._silence_count >= silence_chunks:
-            audio = b"".join(self._listen_buf)
-            self._listen_buf = []
-            self._silence_count = 0
-            self._transcribe(audio)
+            # No speech yet — cap buffer at 8 s to prevent memory growth during silence
+            max_wait_chunks = int(8.0 * _SAMPLE_RATE / _CHUNK)
+            if len(self._listen_buf) >= max_wait_chunks:
+                self._listen_buf = []
+                self._silence_count = 0
+                # Only go idle if freshly woken; in FOLLOW_UP the timer handles timeout
+                if self._sm.state == AssistantState.LISTENING:
+                    self._sm.on_no_speech()
 
     # ── Transcription ─────────────────────────────────────────────────────
 
@@ -260,7 +309,16 @@ class VoiceRuntime:
 
             self._sm.on_utterance_end()
             arr = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
-            segments, _ = self._stt_model.transcribe(arr, language="en")
+            segments, _ = self._stt_model.transcribe(
+                arr,
+                language="en",
+                initial_prompt=(
+                    "Hey Jarvis, open Chrome, play Skyfall on YouTube, search YouTube, "
+                    "volume up, volume down, mute, unmute, take a screenshot, "
+                    "open Spotify, restart, shutdown, lock screen, open settings."
+                ),
+                beam_size=5,
+            )
             text = " ".join(s.text for s in segments).strip()
             if not text:
                 self._sm.on_no_speech()
@@ -299,31 +357,10 @@ class VoiceRuntime:
         if self._on_response:
             self._on_response(response)
         self._speak(response)
-        self._sm.on_speaking_done()
+        # on_speaking_done called by _tts_worker after audio finishes
 
-    # ── TTS + interruption ────────────────────────────────────────────────
+    # ── TTS ───────────────────────────────────────────────────────────────
 
     def _speak(self, text: str) -> None:
-        if self._tts_engine is None:
-            return
-        try:
-            self._sm.on_response_ready()
-            with self._tts_lock:
-                self._tts_engine.say(text)
-                self._tts_engine.runAndWait()
-        except Exception:
-            logger.exception("TTS failed")
-
-    def _check_interrupt(self, chunk: bytes) -> None:
-        threshold = self._settings.vad_energy_threshold * _INTERRUPT_RMS_MULTIPLIER
-        if _rms(chunk) > threshold:
-            self._do_interrupt()
-
-    def _do_interrupt(self) -> None:
-        logger.info("Speech detected during TTS — interrupting")
-        if self._tts_engine is not None:
-            try:
-                self._tts_engine.stop()
-            except Exception:
-                logger.debug("TTS stop() raised (may be harmless)", exc_info=True)
-        self._sm.on_interrupted()
+        self._sm.on_response_ready()
+        self._tts_queue.put(text)  # TTS worker speaks and calls on_speaking_done
