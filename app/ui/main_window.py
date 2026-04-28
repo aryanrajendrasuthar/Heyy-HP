@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from app.memory.memories import MemoryRepository
     from app.memory.reminders import ReminderRepository
     from app.memory.tasks import TaskRepository
+    from app.services.icloud_reminders import ICloudReminderSync
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ _GOLD = "#FFD700"
 _ORANGE = "#FFA500"
 _TEXT = "#A0C8D8"
 _DIM = "#2A4A5A"
-_BORDER_DIM = "rgba(0,212,255,0.18)"
+_BORDER_DIM = "rgba(0,212,255,46)"
 
 _STATE_COLORS: dict[AssistantState, str] = {
     AssistantState.IDLE:          "#2A5060",
@@ -126,6 +127,7 @@ class HPMainWindow(QMainWindow):
         tasks: TaskRepository | None = None,
         memories: MemoryRepository | None = None,
         reminders: ReminderRepository | None = None,
+        icloud: ICloudReminderSync | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -133,6 +135,7 @@ class HPMainWindow(QMainWindow):
         self._tasks = tasks
         self._memories = memories
         self._reminders = reminders
+        self._icloud = icloud
         self._manual_trigger: object = None
 
         self.setWindowTitle(settings.app_name)
@@ -439,7 +442,7 @@ class HPMainWindow(QMainWindow):
             QPushButton {{
                 background: {_PANEL_BG};
                 color: #FF7700;
-                border: 1px solid rgba(255,119,0,0.35);
+                border: 1px solid rgba(255,119,0,89);
                 border-radius: 4px;
                 font-size: 12px;
                 font-weight: bold;
@@ -533,20 +536,24 @@ class HPMainWindow(QMainWindow):
         )
 
     def refresh_reminders(self) -> None:
-        if self._reminders is None:
-            return
-        upcoming = self._reminders.list_upcoming()
-        if upcoming:
-            lines = []
+        lines: list[str] = []
+
+        if self._reminders is not None:
+            upcoming = self._reminders.list_upcoming()
             for content, remind_at in upcoming[:4]:
                 try:
                     dt = datetime.fromisoformat(remind_at)
                     lines.append(f"• {content} @ {dt.strftime('%I:%M %p')}")
                 except Exception:
                     lines.append(f"• {content}")
-            self._reminders_label.setText("\n".join(lines))
-        else:
-            self._reminders_label.setText("No upcoming reminders")
+
+        if self._icloud is not None and self._icloud.connected:
+            for title in self._icloud.get_todos()[:4]:
+                lines.append(f"☁  {title}")
+
+        self._reminders_label.setText(
+            "\n".join(lines) if lines else "No upcoming reminders"
+        )
 
     def show_notification(self, text: str) -> None:
         """Display a reminder or notification in the response area and history."""

@@ -16,6 +16,40 @@ from app.llm.conversation import ConversationBuffer
 
 logger = logging.getLogger(__name__)
 
+# ── Video-suggestion helpers ──────────────────────────────────────────────
+import re as _re
+import webbrowser as _webbrowser
+
+_VIDEO_RE = _re.compile(r'\[VIDEO:([^\]]+)\]', _re.IGNORECASE)
+
+
+def _parse_video_tag(text: str) -> tuple[str, str | None]:
+    """Strip [VIDEO:query] from LLM response; return (clean_text, query_or_None)."""
+    m = _VIDEO_RE.search(text)
+    if m:
+        query = m.group(1).strip()
+        clean = _VIDEO_RE.sub("", text).strip()
+        return clean, query
+    return text, None
+
+
+def _is_yes(text: str) -> bool:
+    t = text.lower().strip().rstrip(".,!? ")
+    return bool(_re.search(
+        r"\b(yes|yeah|yep|yup|sure|ok|okay|please|go ahead|show me|play|"
+        r"open it|absolutely|of course|definitely|do it|watch|let me see)\b",
+        t,
+    ))
+
+
+def _is_no(text: str) -> bool:
+    t = text.lower().strip().rstrip(".,!? ")
+    return bool(_re.search(
+        r"\b(no|nope|nah|skip|don'?t|not now|no thanks|i'?m good|pass|never mind)\b",
+        t,
+    ))
+
+
 # ── Optional dependency guards ────────────────────────────────────────────
 try:
     import pyaudio as _pyaudio
@@ -92,6 +126,7 @@ class VoiceRuntime:
         self._silence_count: int = 0
         self._has_speech: bool = False  # True once actual speech detected in current listen window
         self._tts_queue: queue.Queue[str | None] = queue.Queue()
+        self._pending_video_query: str | None = None  # set when LLM suggests a video
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -175,14 +210,20 @@ class VoiceRuntime:
         """Init pyttsx3 and speak queued text — runs in its own thread for COM compatibility."""
         tts_ok = False
         engine = None
-        if _TTS_AVAILABLE:
+        speak_count = 0
+
+        def _reinit_engine() -> tuple[bool, object]:
             try:
-                engine = _pyttsx3.init()
-                engine.setProperty("rate", self._settings.tts_rate)
-                engine.setProperty("volume", self._settings.tts_volume)
-                tts_ok = True
+                e = _pyttsx3.init()
+                e.setProperty("rate", self._settings.tts_rate)
+                e.setProperty("volume", self._settings.tts_volume)
+                return True, e
             except Exception:
-                logger.exception("Failed to init TTS engine")
+                logger.exception("TTS engine (re)init failed")
+                return False, None
+
+        if _TTS_AVAILABLE:
+            tts_ok, engine = _reinit_engine()
         else:
             logger.warning("pyttsx3 not available — TTS disabled")
 
@@ -199,20 +240,32 @@ class VoiceRuntime:
                 self._sm.on_speaking_done()
                 continue
             if tts_ok and engine is not None:
-                try:
-                    engine.say(text)
-                    engine.runAndWait()
-                except Exception:
-                    logger.exception("TTS speak failed — reinitialising engine")
-                    # pyttsx3 can get into a bad state; reinit so next utterance works
+                speak_count += 1
+                # Proactively reinit every 4 utterances — prevents pyttsx3 internal state buildup
+                if speak_count % 4 == 0:
                     try:
-                        engine = _pyttsx3.init()
-                        engine.setProperty("rate", self._settings.tts_rate)
-                        engine.setProperty("volume", self._settings.tts_volume)
+                        engine.stop()
                     except Exception:
-                        logger.exception("TTS engine reinit failed")
-                        tts_ok = False
-                        engine = None
+                        pass
+                    tts_ok, engine = _reinit_engine()
+
+                if tts_ok and engine is not None:
+                    # Wrap runAndWait in a sub-thread with timeout to prevent COM deadlock
+                    _done = threading.Event()
+                    _e, _t = engine, text
+
+                    def _speak(_e=_e, _t=_t, _done=_done) -> None:
+                        try:
+                            _e.say(_t)
+                            _e.runAndWait()
+                        except Exception:
+                            logger.exception("TTS speak error")
+                        _done.set()
+
+                    threading.Thread(target=_speak, daemon=True).start()
+                    if not _done.wait(timeout=12.0):
+                        logger.warning("TTS runAndWait timed out — reinitialising")
+                        tts_ok, engine = _reinit_engine()
             self._sm.on_speaking_done()
 
     # ── Audio callback ────────────────────────────────────────────────────
@@ -334,6 +387,34 @@ class VoiceRuntime:
     # ── Response ──────────────────────────────────────────────────────────
 
     def _respond(self, text: str) -> None:
+        # ── Video confirmation follow-up ──────────────────────────────────
+        if self._pending_video_query is not None:
+            query = self._pending_video_query
+            self._pending_video_query = None
+
+            if _is_yes(text):
+                url = (
+                    "https://www.youtube.com/results?search_query="
+                    + query.replace(" ", "+")
+                )
+                _webbrowser.open(url)
+                response = f"Opening YouTube for: {query}"
+                logger.info("Video confirmed — opening YouTube: %s", url)
+                if self._on_response:
+                    self._on_response(response)
+                self._speak(response)
+                return
+
+            if _is_no(text):
+                response = "Got it, let me know if you need anything else."
+                if self._on_response:
+                    self._on_response(response)
+                self._speak(response)
+                return
+
+            # User said something unrelated — fall through to normal processing
+
+        # ── Normal command / LLM processing ──────────────────────────────
         response: str | None = None
 
         # 1. Try command dispatcher
@@ -344,8 +425,16 @@ class VoiceRuntime:
         if response is None and self._llm is not None:
             try:
                 self._conv.add("user", text)
-                response = self._llm.chat(text)
-                self._conv.add("assistant", response)
+                raw = self._llm.chat(text, history=self._conv.history())
+                self._conv.add("assistant", raw)
+
+                clean, video_query = _parse_video_tag(raw)
+                if video_query:
+                    self._pending_video_query = video_query
+                    response = f"{clean} Want me to find a YouTube video on this?"
+                    logger.info("Video suggestion detected: %s", video_query)
+                else:
+                    response = raw
             except Exception:
                 logger.exception("LLM chat failed")
 

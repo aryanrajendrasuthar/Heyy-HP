@@ -1,62 +1,102 @@
-"""Vision pipeline: open webcam, detect hand, identify object, return description."""
+"""Vision pipeline: capture a webcam frame and describe it via Claude vision API."""
 
 from __future__ import annotations
 
+import base64
 import logging
-from typing import Any
+import threading
 
 from app.config.settings import AppSettings
-from app.vision.capture import _CV2_AVAILABLE
-from app.vision.capture import capture_frames as _capture_frames
-from app.vision.hands import BBox
-from app.vision.hands import detect_hand_roi as _detect_hand_roi
-from app.vision.identifier import identify_objects as _identify_objects
 
 logger = logging.getLogger(__name__)
 
 
 class VisionPipeline:
     def __init__(self, settings: AppSettings) -> None:
+        self._settings = settings
         self._device = settings.webcam_index
-        self._max_frames = settings.vision_max_frames
-        self._confidence = settings.vision_confidence
 
     def identify_hand_object(self) -> str:
-        if not _CV2_AVAILABLE:
-            return (
-                "Vision is not available. "
-                "Please install opencv-python and mediapipe to use this feature."
-            )
-        logger.info("Starting vision capture on device %d", self._device)
-        frames = _capture_frames(self._device, self._max_frames)
-        if not frames:
+        """Capture one webcam frame and ask Claude to describe what's visible."""
+        frame_b64 = self._capture_frame()
+        if frame_b64 is None:
             return "I couldn't access the webcam. Please check your camera connection."
+        return self._describe_with_llm(frame_b64)
 
-        best_frame, hand_roi = self._find_best_frame(frames)
-        if best_frame is None:
+    def _capture_frame(self) -> str | None:
+        """Open the webcam, grab one frame, return it as a base64-encoded JPEG string."""
+        try:
+            import cv2  # type: ignore[import-untyped]
+        except ImportError:
+            logger.warning("opencv-python not installed — vision disabled")
+            return None
+
+        cap = cv2.VideoCapture(self._device)
+        if not cap.isOpened():
+            logger.warning("Could not open webcam device %d", self._device)
+            return None
+        try:
+            # Discard a couple of frames so auto-exposure can settle
+            for _ in range(3):
+                cap.read()
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                logger.warning("Webcam read failed")
+                return None
+
+            # Resize to ≤640 px wide to keep Claude API payload small
+            h, w = frame.shape[:2]
+            if w > 640:
+                scale = 640.0 / w
+                frame = cv2.resize(frame, (640, int(h * scale)))
+
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                return None
+            return base64.b64encode(buf.tobytes()).decode()
+        finally:
+            cap.release()
+
+    def _describe_with_llm(self, frame_b64: str) -> str:
+        """Send the frame to Claude Haiku and return a brief description."""
+        api_key = self._settings.anthropic_api_key
+        if not api_key:
             return (
-                "I couldn't detect a hand in the camera view. "
-                "Please hold your hand in front of the camera."
+                "Vision analysis requires an Anthropic API key. "
+                "Add HP_ANTHROPIC_API_KEY to your .env file."
             )
-        objects = _identify_objects(best_frame, hand_roi, self._confidence)
-        if not objects:
-            return (
-                "I can see your hand but I couldn't identify what you're holding. "
-                "Make sure the object is clearly visible."
+        try:
+            import anthropic  # type: ignore[import-untyped]
+
+            client = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=120,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": frame_b64,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Describe what you see in this webcam photo in two sentences max. "
+                                    "Focus on what the person is holding if anything. "
+                                    "Be direct and conversational — no markdown."
+                                ),
+                            },
+                        ],
+                    }
+                ],
             )
-        return self._describe(objects, hand_detected=hand_roi is not None)
-
-    def _find_best_frame(self, frames: list[Any]) -> tuple[Any, BBox | None]:
-        for frame in frames:
-            roi = _detect_hand_roi(frame)
-            if roi is not None:
-                return frame, roi
-        return (frames[-1], None) if frames else (None, None)
-
-    def _describe(self, objects: list[str], *, hand_detected: bool) -> str:
-        prefix = "In your hand, I can see" if hand_detected else "I can see"
-        if len(objects) == 1:
-            return f"{prefix} what appears to be a {objects[0]}."
-        main = objects[0]
-        rest = " and ".join(objects[1:3])
-        return f"{prefix} what appears to be a {main}, along with {rest}."
+            return msg.content[0].text.strip()
+        except Exception:
+            logger.exception("Vision LLM call failed")
+            return "I captured a photo but couldn't analyse it right now."

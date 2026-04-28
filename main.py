@@ -17,6 +17,7 @@ def main() -> int:
     from app.memory.reminders import ReminderRepository
     from app.memory.routines import RoutineRepository
     from app.memory.tasks import TaskRepository
+    from app.services.icloud_reminders import ICloudReminderSync
     from app.ui.app import create_app
     from app.ui.main_window import HPMainWindow
     from app.ui.tray import HPTray
@@ -32,6 +33,16 @@ def main() -> int:
     history = ConversationHistory(db)
     routines = RoutineRepository(db)
     vision = VisionPipeline(settings)
+
+    icloud: ICloudReminderSync | None = None
+    if settings.icloud_username and settings.icloud_password:
+        icloud = ICloudReminderSync(
+            settings.icloud_username,
+            settings.icloud_password,
+            settings.icloud_reminders_list,
+        )
+        if not icloud.start():
+            icloud = None
 
     app = create_app(settings)
     state_machine = AssistantStateMachine(settings)
@@ -55,6 +66,7 @@ def main() -> int:
         tasks=tasks,
         memories=memories,
         reminders=reminders,
+        icloud=icloud,
     )
     llm = get_provider(settings)
     conv = ConversationBuffer(max_turns=settings.llm_max_history)
@@ -62,7 +74,7 @@ def main() -> int:
     state_machine.add_state_callback(bridge.state_changed.emit)
     bridge.quit_requested.connect(app.quit)
 
-    window = HPMainWindow(settings, tasks=tasks, memories=memories, reminders=reminders)
+    window = HPMainWindow(settings, tasks=tasks, memories=memories, reminders=reminders, icloud=icloud)
     tray = HPTray(window)
 
     bridge.state_changed.connect(window.set_state)
@@ -96,6 +108,8 @@ def main() -> int:
 
     result = app.exec()
     runtime.stop()
+    if icloud is not None:
+        icloud.stop()
     db.close()
     return result
 

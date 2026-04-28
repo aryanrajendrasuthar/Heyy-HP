@@ -73,3 +73,8 @@ class AppSettings(BaseSettings):
     webcam_index: int = Field(default=0, ge=0)
     vision_max_frames: int = Field(default=30, ge=1)
     vision_confidence: float = Field(default=0.4, ge=0.0, le=1.0)
+
+    # iCloud Reminders (optional — requires caldav package)
+    icloud_username: str = ""
+    icloud_password: str = ""
+    icloud_reminders_list: str = "Reminders"

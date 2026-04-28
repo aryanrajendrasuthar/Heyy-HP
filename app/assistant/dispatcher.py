@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.memory.memories import MemoryRepository
     from app.memory.reminders import ReminderRepository
     from app.memory.tasks import TaskRepository
+    from app.services.icloud_reminders import ICloudReminderSync
 
 # Patterns ordered specific-to-general.
 # Vision and no-argument intents use no capture group (m.lastindex is None).
@@ -57,6 +58,19 @@ _INTENTS: list[tuple[str, re.Pattern[str]]] = [
     )),
     ("show_memories", re.compile(
         r"what(?:\s+do)?(?:\s+you)?\s+remember|show\s+(?:my\s+)?memories",
+        re.IGNORECASE,
+    )),
+    # ── iCloud Reminders ───────────────────────────────────────────────────
+    ("icloud_add", re.compile(
+        r"(?:add|create|put)\s+(.+?)\s+(?:to|in(?:to)?)\s+(?:my\s+)?icloud(?:\s+reminders?)?",
+        re.IGNORECASE,
+    )),
+    ("icloud_complete", re.compile(
+        r"(?:complete|done|finish|mark(?:\s+as)?\s+done)\s+(.+?)\s+(?:in|on)\s+icloud",
+        re.IGNORECASE,
+    )),
+    ("icloud_show", re.compile(
+        r"(?:show|what(?:\s+are)?(?:\s+my)?|list)\s+(?:my\s+)?icloud\s+reminders?",
         re.IGNORECASE,
     )),
     # ─────────────────────────────────────────────────────────────────────
@@ -125,6 +139,7 @@ class CommandDispatcher:
         tasks: TaskRepository | None = None,
         memories: MemoryRepository | None = None,
         reminders: ReminderRepository | None = None,
+        icloud: ICloudReminderSync | None = None,
     ) -> None:
         self._launcher = AppLauncher()
         self._browser = BrowserRouter()
@@ -136,6 +151,7 @@ class CommandDispatcher:
         self._tasks = tasks
         self._memories = memories
         self._reminders = reminders
+        self._icloud = icloud
 
     # Conversational filler stripped before pattern matching
     _FILLER = re.compile(
@@ -234,6 +250,27 @@ class CommandDispatcher:
                     return "I remember: " + "; ".join(items)
                 return "I don't have any stored memories yet."
             return "Memory storage is not available."
+
+        # ── iCloud Reminders ───────────────────────────────────────────────
+        if intent == "icloud_add":
+            if self._icloud is None or not self._icloud.connected:
+                return "iCloud Reminders is not connected. Add your iCloud credentials to .env."
+            ok = self._icloud.add_reminder(arg)
+            return f"Added to iCloud Reminders: {arg}" if ok else "Could not add reminder to iCloud."
+
+        if intent == "icloud_complete":
+            if self._icloud is None or not self._icloud.connected:
+                return "iCloud Reminders is not connected."
+            matched = self._icloud.complete_reminder(arg)
+            return f"Completed in iCloud: {matched}" if matched else f"No iCloud reminder matching '{arg}'."
+
+        if intent == "icloud_show":
+            if self._icloud is None or not self._icloud.connected:
+                return "iCloud Reminders is not connected. Add your iCloud credentials to .env."
+            items = self._icloud.get_todos()
+            if items:
+                return "Your iCloud reminders: " + ", ".join(items[:6])
+            return "No pending iCloud reminders."
 
         # ── Vision ─────────────────────────────────────────────────────────
         if intent == "vision_identify":
